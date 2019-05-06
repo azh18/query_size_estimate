@@ -228,10 +228,13 @@ class DatasetGenerator:
         try:
             sql_cur.execute(sql)
             result = sql_cur.fetchone()
+            if len(result) != 1:
+                conn.ping(reconnect=True)
+                return None
             print(result)
         except Exception as e:
             print(e)
-            DatasetGenerator.init_sql_conn()
+            conn.ping(reconnect=True)
             return None
         result = result[0]
         return result
@@ -262,6 +265,6 @@ if __name__ == "__main__":
         extractor.feed(sql_dir + sf)
     extractor.dump("sql_info.pkl")
     extractor.show()
-    query_items = extractor.generate_sqls(10000, 1, 2)
+    query_items = extractor.generate_sqls(1000, 1, 2)
     data_generator = DatasetGenerator("data_gen.csv")
     data_generator.generate_dataset(query_items)

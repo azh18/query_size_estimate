@@ -200,7 +200,7 @@ class DatasetGenerator:
 
     def __init__(self, csv_file):
         DatasetGenerator.init_sql_conn()
-        self.fp = open(csv_file, "a")
+        self.fp = open(csv_file, "a+")
 
     @staticmethod
     def init_sql_conn():
@@ -209,6 +209,7 @@ class DatasetGenerator:
             password = '123456'
             conn = pymysql.connect(host='34.92.240.139', user=username, passwd=password, db='imdb', read_timeout=60)
             DatasetGenerator.sql_conn = conn
+            return conn
 
     # get the csv format of a query and its result
     @staticmethod
@@ -224,11 +225,13 @@ class DatasetGenerator:
     def feed_sql(self, sql):
         conn = DatasetGenerator.sql_conn
         sql_cur = conn.cursor()
-        sql_cur.execute(sql)
         try:
+            sql_cur.execute(sql)
             result = sql_cur.fetchone()
             print(result)
-        except:
+        except Exception as e:
+            print(e)
+            DatasetGenerator.init_sql_conn()
             return None
         result = result[0]
         return result
@@ -259,6 +262,6 @@ if __name__ == "__main__":
         extractor.feed(sql_dir + sf)
     extractor.dump("sql_info.pkl")
     extractor.show()
-    query_items = extractor.generate_sqls(100, 1, 2)
+    query_items = extractor.generate_sqls(10000, 1, 2)
     data_generator = DatasetGenerator("data_gen.csv")
     data_generator.generate_dataset(query_items)

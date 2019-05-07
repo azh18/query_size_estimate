@@ -265,6 +265,6 @@ if __name__ == "__main__":
         extractor.feed(sql_dir + sf)
     extractor.dump("sql_info.pkl")
     extractor.show()
-    query_items = extractor.generate_sqls(500, 1, 2)
+    query_items = extractor.generate_sqls(1000, 1, 2)
     data_generator = DatasetGenerator("data_gen.csv")
     data_generator.generate_dataset(query_items)

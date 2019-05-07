@@ -23,7 +23,7 @@ class SqlElemGenerator:
     def connect_db(self):
         username = 'zbw0046'
         password = '123456'
-        conn = pymysql.connect(host='34.92.240.139', user=username, passwd=password, db='imdb', read_timeout=60)
+        conn = pymysql.connect(host='35.200.254.32', user=username, passwd=password, db='imdb', read_timeout=60)
         self.sql_conn = conn
         return conn
 
@@ -207,7 +207,7 @@ class DatasetGenerator:
         if DatasetGenerator.sql_conn is None:
             username = 'zbw0046'
             password = '123456'
-            conn = pymysql.connect(host='34.92.240.139', user=username, passwd=password, db='imdb', read_timeout=60)
+            conn = pymysql.connect(host='35.200.254.32', user=username, passwd=password, db='imdb', read_timeout=60)
             DatasetGenerator.sql_conn = conn
             return conn
 
@@ -228,10 +228,13 @@ class DatasetGenerator:
         try:
             sql_cur.execute(sql)
             result = sql_cur.fetchone()
+            if len(result) != 1:
+                conn.ping(reconnect=True)
+                return None
             print(result)
         except Exception as e:
             print(e)
-            DatasetGenerator.init_sql_conn()
+            conn.ping(reconnect=True)
             return None
         result = result[0]
         return result
@@ -262,6 +265,6 @@ if __name__ == "__main__":
         extractor.feed(sql_dir + sf)
     extractor.dump("sql_info.pkl")
     extractor.show()
-    query_items = extractor.generate_sqls(10000, 1, 2)
+    query_items = extractor.generate_sqls(500, 1, 2)
     data_generator = DatasetGenerator("data_gen.csv")
     data_generator.generate_dataset(query_items)

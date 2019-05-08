@@ -125,7 +125,7 @@ class SqlElemGenerator:
             else:
                 table_column_map[tbl_abbr] = [c]
         cand_tables = list(table_column_map.keys())
-        cand_ops = ["=", ">", "<"]
+        cand_ops = ["=", ">", "<", "<>"]
         conn = self.sql_conn if self.sql_conn is not None else self.connect_db()
         sql_cur = conn.cursor()
         for i in range(num):
@@ -158,6 +158,9 @@ class SqlElemGenerator:
             while len(chosen_idx) < n_pred:
                 idx = random.randint(0, len(cand_cols)-1)
                 chosen_idx.add(idx)
+                if len(chosen_idx) == len(cand_cols):
+                    # if no more pred can be generated, break
+                    break
             chosen_cols = list(map(lambda x: cand_cols[x], chosen_idx))
             for c in chosen_cols:
                 table_associated_abbr.add(c.split(".")[0])
@@ -169,6 +172,10 @@ class SqlElemGenerator:
                 tab_abbr = col.split(".")[0].strip()
                 tab = self.abbr2table[tab_abbr]
                 col_single_name = col.split(".")[1]
+                op = cand_ops[random.randint(0, 3)]
+
+                vals = []
+
                 rand_row_sql = "SELECT x.%s from %s as x JOIN (SELECT FLOOR(RAND()*(SELECT MAX(id) FROM %s)) as id) as y WHERE x.id = y.id" % (col_single_name, tab, tab)
                 # rand_row_sql = "SELECT %s FROM %s WHERE id = FLOOR(RAND()*(select max(id) from %s)) AND %s is not null LIMIT 1" % (col, tab, tab, col)
                 sql_cur.execute(rand_row_sql)
@@ -179,10 +186,34 @@ class SqlElemGenerator:
                     print("val is None!!!")
                     print(rand_row_sql)
                     continue
-                op = cand_ops[random.randint(0, 2)]
-                pred = "%s%s%s" % (col, op, val)
-                predicates.append(pred)
-                pred_items.append((col, op, str(val)))
+                vals.append(val)
+                # if <>, generate second value
+                if op == "<>":
+                    val2 = None
+                    while val2 is None or val2 == val:
+                        rand_row_sql = "SELECT x.%s from %s as x JOIN (SELECT FLOOR(RAND()*(SELECT MAX(id) FROM %s)) as id) as y WHERE x.id = y.id" % (
+                        col_single_name, tab, tab)
+                        # rand_row_sql = "SELECT %s FROM %s WHERE id = FLOOR(RAND()*(select max(id) from %s)) AND %s is not null LIMIT 1" % (col, tab, tab, col)
+                        sql_cur.execute(rand_row_sql)
+                        val2 = sql_cur.fetchone()
+                        if type(val2) is tuple:
+                            val2 = val2[0]
+                        if val2 is None:
+                            print("val is None!!!")
+                            print(rand_row_sql)
+                            continue
+                    vals.append(val2)
+                if op == "<>":
+                    vals = sorted(vals)
+                    pred1 = "%s%s%s" % (col, ">", vals[0])
+                    pred2 = "%s%s%s" % (col, "<", vals[1])
+                    predicates += [pred1, pred2]
+                    pred_items += [(col, ">", str(vals[0])), (col, "<", str(vals[1]))]
+                else:
+                    val = vals[0]
+                    pred = "%s%s%s" % (col, op, val)
+                    predicates.append(pred)
+                    pred_items.append((col, op, str(val)))
             if len(chosen_joins) + len(predicates) == 0:
                 continue
             where_block = " AND ".join(chosen_joins + predicates)
@@ -265,6 +296,6 @@ if __name__ == "__main__":
         extractor.feed(sql_dir + sf)
     extractor.dump("sql_info.pkl")
     extractor.show()
-    query_items = extractor.generate_sqls(1000, 1, 2)
+    query_items = extractor.generate_sqls(1000, 2, 3)
     data_generator = DatasetGenerator("data_gen.csv")
     data_generator.generate_dataset(query_items)

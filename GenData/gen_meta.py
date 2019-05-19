@@ -248,7 +248,7 @@ class MetadataFetcher(SqlElemGenerator):
     def __init__(self, train_data_sql):
         super(MetadataFetcher, self).__init__()
         self.table_size = {}  # tab->size
-        self.histograms = {}  # col->[hist1, hist2, ...]
+        self.histograms = {}  # col->([tick1, tick2, ...], [hist1, hist2, ...])
         self.n_unique_values = {}  # col->n_unique_values
         self.feed(train_data_sql)
         self.connManager = MysqlConnect
@@ -308,8 +308,8 @@ class MetadataFetcher(SqlElemGenerator):
 
     def get_histograms(self):
         for col in self.columns:
-            hist = self.get_col_histogram(col)
-            self.histograms[col] = hist
+            levels, hist = self.get_col_histogram(col)
+            self.histograms[col] = (levels, hist)
         return self.histograms
 
     def get_col_histogram(self, tbl_col):
@@ -318,15 +318,15 @@ class MetadataFetcher(SqlElemGenerator):
         levels = []
         interval = (max_val - min_val) / N_INTERVAL
         for i in range(N_INTERVAL):
-            levels.append(int(min_val + i * interval))
-        levels.append(max_val)
+            levels.append(min_val + i * interval)
+        levels.append(max_val+1)
         hist = []
         tbl_abbr = tbl_col.split(".")[0]
         tbl = self.abbr2table[tbl_abbr]
         col = tbl_col.split(".")[1]
         for i in range(N_INTERVAL):
             min_bar, max_bar = levels[i], levels[i+1]
-            sql = "SELECT count(*) FROM %s WHERE %s >= %d AND %s <= %d" % (
+            sql = "SELECT count(*) FROM %s WHERE %s >= %f AND %s < %f" % (
                 tbl, col, min_bar, col, max_bar
             )
             for retry in range(3):
@@ -345,7 +345,7 @@ class MetadataFetcher(SqlElemGenerator):
                 except Exception as e:
                     print(e)
         print(hist)
-        return hist
+        return levels, hist
 
 
 if __name__ == "__main__":

@@ -1,59 +1,237 @@
 import csv
 import torch
 from torch.utils.data import dataset
+import pickle
 
-from mscn.util import *
+from mscnNoSample.util import *
 
 
-def load_data(file_name, num_materialized_samples):
-    joins = []
-    predicates = []
-    tables = []
-    samples = []
-    label = []
+def make_multiple_slice(n_slice):
+    ret = []
+    for i in range(n_slice):
+        ret.append([])
+    return ret
 
-    # Load queries
-    with open(file_name + ".csv", 'rU') as f:
-        data_raw = list(list(rec) for rec in csv.reader(f, delimiter='#'))
-        for row in data_raw:
-            tables.append(row[0].split(','))
-            joins.append(row[1].split(','))
-            predicates.append(row[2].split(','))
-            if int(row[3]) < 1:
-                print("Queries must have non-zero cardinalities")
-                exit(1)
-            label.append(row[3])
-    print("Loaded queries")
-    #
-    # # Load bitmaps
-    # num_bytes_per_bitmap = int((num_materialized_samples + 7) >> 3)
-    # with open(file_name + ".bitmaps", 'rb') as f:
-    #     for i in range(len(tables)):
-    #         four_bytes = f.read(4)
-    #         if not four_bytes:
-    #             print("Error while reading 'four_bytes'")
-    #             exit(1)
-    #         num_bitmaps_curr_query = int.from_bytes(four_bytes, byteorder='little')
-    #         bitmaps = np.empty((num_bitmaps_curr_query, num_bytes_per_bitmap * 8), dtype=np.uint8)
-    #         for j in range(num_bitmaps_curr_query):
-    #             # Read bitmap
-    #             bitmap_bytes = f.read(num_bytes_per_bitmap)
-    #             if not bitmap_bytes:
-    #                 print("Error while reading 'bitmap_bytes'")
-    #                 exit(1)
-    #             bitmaps[j] = np.unpackbits(np.frombuffer(bitmap_bytes, dtype=np.uint8))
-    #         samples.append(bitmaps)
-    # print("Loaded bitmaps")
 
-    # Split predicates
-    predicates = [list(chunks(d, 3)) for d in predicates]
+class Scalar:
+    def __init__(self, min_val=0, max_val=0):
+        self.min_val = min_val
+        self.max_val = max_val
 
-    return joins, predicates, tables, samples, label
+    def fit(self, data_list):
+        self.min_val = min(data_list)
+        self.max_val = max(data_list)
 
+    def transform(self, data_list):
+        ret = []
+        for d in data_list:
+            ret.append((d-self.min_val)/(self.max_val-self.min_val))
+        return ret
+
+    def inverse_transform(self, data_list):
+        ret = []
+        for d in data_list:
+            val = d * (self.max_val-self.min_val) + self.min_val
+            ret.append(val)
+        return ret
+
+
+class DataLoader:
+    def __init__(self, file_name_train_data, file_name_meta, num_materialized_samples):
+        metas = pickle.load(open(file_name_meta, "rb"))
+        self.table2abbr = metas[0]
+        self.abbr2table = metas[1]
+        self.columns = metas[2]
+        self.joins = metas[3]
+        self.col_min_max = metas[4]
+        self.table_abbr_size = metas[5]
+        self.raw_histogram = metas[6]
+        self.col_n_unique_values = metas[7]
+        self.joins = make_multiple_slice(5)  # (raw_joins_list, joins_onehot_list, table_size_list, hist1_list, hist2_list, col_meta_list)
+        self.predicates = make_multiple_slice(3)  # (raw_preds_list, preds_onehot_list, estimated_hit_rate, table_size)
+        self.labels = make_multiple_slice(1)
+        self.file_name_train_data = file_name_train_data
+        self.num_materialized_samples = num_materialized_samples
+        # define scalars
+        self.join_hist_scalar = Scalar()
+        self.table_size_scalar = Scalar()
+        self.col_val_scalar_dict = {}
+
+    def load_data(self, file_name, num_materialized_samples):
+        joins = []
+        predicates = []
+        labels = []
+        # Load queries
+        with open(file_name, 'rU') as f:
+            data_raw = list(list(rec) for rec in csv.reader(f, delimiter='#'))
+            for row in data_raw:
+                joins.append(row[1].split(','))
+                predicates.append(row[2].split(','))
+                if int(row[3]) < 1:
+                    print("Queries must have non-zero cardinalities")
+                    exit(1)
+                labels.append(row[3])
+        print("Loaded queries")
+
+        # Split predicates
+        predicates = [list(chunks(d, 3)) for d in predicates]
+
+        return joins, predicates, labels
+
+    def load_table_size_scalar(self):
+        min_val = min(self.table_abbr_size.values())
+        max_val = max(self.table_abbr_size.values())
+        self.table_size_scalar = Scalar(min_val=min_val, max_val=max_val)
+        return self.table_size_scalar
+
+    def load_col_value_scalar(self, col):
+        if col not in self.col_val_scalar_dict:
+            self.col_val_scalar_dict[col] = Scalar(min_val=self.col_min_max[col][0], max_val=self.col_min_max[col][1])
+        return self.col_val_scalar_dict[col]
+
+    def encode_dataset(self, joins, predicates, column2vec, idx2column, join2vec, idx2join, op2vec, idx2op):
+        predicates_enc = []
+        joins_enc = []
+        join_selectivity_enc = []
+        for i, query in enumerate(predicates):
+            predicates_enc.append(list())
+            joins_enc.append(list())
+            join_selectivity_enc.append(list())
+            pred_dict = {}  # col->(op, val)
+            for predicate in query:
+                if len(predicate) == 3:
+                    # Proper predicate
+                    column = predicate[0]
+                    operator = predicate[1]
+                    val = predicate[2]
+                    col_scalar = self.load_col_value_scalar(column)
+                    norm_val = col_scalar.transform([val])[0]
+                    if column in pred_dict:
+                        pred_dict[column].append((operator, norm_val))
+                    else:
+                        pred_dict[column] = [(operator, norm_val)]
+            # deal with <>
+            for col in pred_dict.keys():
+                if len(pred_dict[col]) == 2:
+                    lower_bound = None
+                    upper_bound = None
+                    for p in pred_dict[col]:
+                        if p[0] == "<":
+                            upper_bound = p[1]
+                        else:
+                            lower_bound = p[1]
+                    if not lower_bound or not upper_bound:
+                        raise Exception
+                    pred_dict[col] = ("<>", lower_bound, upper_bound)
+                elif len(pred_dict[col]) == 1:
+                    pred_dict[col] = pred_dict[col][0]
+                else:
+                    raise Exception
+            # encode preds
+            for col in pred_dict.keys():
+                pred_block = pred_dict[col]
+                op = pred_block[0]
+                lower_bound = 0
+                scale = 0
+                tab_abbr = col.split(".")[0]
+                table_size = self.table_abbr_size[tab_abbr]
+                norm_table_size = self.table_size_scalar.transform([table_size])[0]
+                # compute estimate_hit_rate
+                norm_ticks = self.col_val_scalar_dict[col].transform(self.raw_histogram[0])
+                norm_hists = self.raw_histogram[1] / max(self.raw_histogram[1])
+                estimate_hit_rate = 0
+                if op == "<>":
+                    lower_bound = pred_block[1]
+                    scale = pred_block[2] - lower_bound
+                    beg_idx, end_idx = -1, -1
+                    for idx in range(len(self.raw_histogram[1])):
+                        lb = norm_ticks[idx]
+                        ub = norm_ticks[idx + 1]
+                        if lb <= lower_bound < ub:
+                            beg_idx = idx
+                        if lb <= lower_bound + scale < ub:
+                            end_idx = idx
+                    for idx in range(beg_idx, end_idx + 1):
+                        estimate_hit_rate += norm_hists[idx]
+                elif op == "=":
+                    lower_bound = pred_block[1]
+                    scale = 1
+                    for idx in range(len(self.raw_histogram[1])):
+                        lb = norm_ticks[idx]
+                        ub = norm_ticks[idx + 1]
+                        if lb <= lower_bound < ub:
+                            estimate_hit_rate += norm_hists[idx]
+                            break
+                elif op == "<":
+                    lower_bound = 0
+                    scale = pred_block[1]
+                    for idx in range(len(self.raw_histogram[1])):
+                        lb = norm_ticks[idx]
+                        ub = norm_ticks[idx + 1]
+                        estimate_hit_rate += norm_hists[idx]
+                        if lb <= lower_bound < ub:
+                            break
+                else:  # op == >
+                    lower_bound = pred_block[1]
+                    scale = 1 - lower_bound
+                    beg_idx = -1
+                    for idx in range(len(self.raw_histogram[1])):
+                        lb = norm_ticks[idx]
+                        ub = norm_ticks[idx + 1]
+                        if lb <= lower_bound < ub:
+                            beg_idx = idx
+                    estimate_hit_rate += sum(norm_hists[beg_idx:])
+
+                pred_vec = []
+                pred_vec.append(op2vec[op])
+                pred_vec.append(column2vec[col])
+                pred_vec.append([lower_bound, scale, estimate_hit_rate, norm_table_size])
+                pred_vec = np.hstack(pred_vec)
+                predicates_enc[i].append(pred_vec)
+
+            # Join instruction
+            for join in joins[i]:
+                col1, col2 = join.split("=")
+                tab1, tab2 = col1.split(".")[0], col2.split(".")[0]
+                col1_n_unique, col2_n_unique, col1_min, col2_min, col1_max, col2_max = \
+                    self.col_n_unique_values[col1], self.col_n_unique_values[col2],\
+                    self.col_min_max[col1][0], self.col_min_max[col2][0], \
+                    self.col_min_max[col1][1], self.col_min_max[col2][1]
+                col1_ticks, col1,hist = self.raw_histogram[col1]
+                col2_ticks, col2,hist = self.raw_histogram[col2]
+                col_min, col_max = min(col1_min, col2_min), max(col1_max, col2_max)
+                # regenerate histogram
+                # TODO: how to merge two histogram with different ticks?
+
+                # TODO: construct join_vec
+
+
+                join_vec = join2vec[predicate]
+                joins_enc[i].append(join_vec)
+        return predicates_enc, joins_enc
+
+    def get_train_test_dataset(self, file_name_data=None):
+        file_name_data = self.file_name_train_data if file_name_data is None else file_name_data
+        joins, predicates, labels = self.load_data(file_name_data, self.num_materialized_samples)
+        # Get column name dict
+        column2vec, idx2column = get_set_encoding(self.columns)
+
+        # Get join dict
+        join2vec, idx2join = get_set_encoding(self.joins)
+
+        # Get op dict
+        ops = ["<", ">", "=", "<>"]
+        op2vec, idx2op = get_set_encoding(ops)
+
+        # init scalar
+        self.load_table_size_scalar()
+
+        # Encode dataset with metas
+        enc_join_selectivities, enc_join_metas, enc_preds = self.encode_dataset(joins, predicates, column2vec, idx2column, join2vec, idx2join, op2vec, idx2op)
 
 def load_and_encode_train_data(num_queries, num_materialized_samples):
-    file_name_queries = "GenData/data_gen"
-    file_name_column_min_max_vals = "data/column_min_max_vals.csv"
+    file_name_queries = "GenData/data_gen.csv"
+    file_name_metas = "GenData/gen_data_meta.pkl"
 
     joins, predicates, tables, samples, label = load_data(file_name_queries, num_materialized_samples)
 

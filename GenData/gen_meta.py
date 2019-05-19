@@ -253,6 +253,13 @@ class MetadataFetcher(SqlElemGenerator):
         self.feed(train_data_sql)
         self.connManager = MysqlConnect
 
+    def fetch_store_metadata(self):
+        self.get_n_unique_vals()
+        self.get_histograms()
+        self.get_table_size()
+        output = (self.table2abbr, self.abbr2table, self.columns, self.joins, self.columns_dom, self.table_size, self.histograms, self.n_unique_values)
+        pickle.dump(output, open("gen_data_meta.pkl", "wb"))
+
     def get_table_size(self):
         for tbl in self.table2abbr.keys():
             table_abbr = self.table2abbr[tbl]
@@ -340,7 +347,7 @@ class MetadataFetcher(SqlElemGenerator):
         print(hist)
         return hist
 
+
 if __name__ == "__main__":
     fetcher = MetadataFetcher("./data_gen.sql")
-    table_size = fetcher.get_n_unique_vals()
-    print(table_size)
+    fetcher.fetch_store_metadata()

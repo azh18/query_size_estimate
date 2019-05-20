@@ -55,6 +55,9 @@ class SqlElemGenerator:
                 if "." in right_elem and right_elem.split(".")[0] in abbr2table:
                     # indicate that this is a join
                     joins.add(w.strip())
+                    # add columns inside the join
+                    columns.add(left_elem)
+                    columns.add(right_elem)
                     continue
             # it is a predicate if it is not a join
             op = ">"

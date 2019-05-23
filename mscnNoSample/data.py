@@ -127,6 +127,11 @@ class DataLoader:
         self.idx2join = None
         self.op2vec = None
         self.idx2op = None
+        # dim
+        self.pred_dim = 0
+        self.join_dim = 0
+        self.selectivity_dim = 0
+        self.histogram_dim = 10
 
     @staticmethod
     def load_data(file_name, num_materialized_samples, num_queries=None):
@@ -139,15 +144,27 @@ class DataLoader:
             data_raw = list(list(rec) for rec in csv.reader(f, delimiter='#'))
             for row in data_raw:
                 if row[1] != "":
-                    joins.append(row[1].split(','))
+                    join = row[1].split(',')
                 else:
-                    # no joins
-                    joins.append([])
-                predicates.append(row[2].split(','))
+                    join = []
+                if row[2] != "":
+                    pred = row[2].split(',')
+                else:
+                    # no predicates
+                    pred = []
+
+                if len(pred) > 0:
+                    joins.append(join)
+                    predicates.append(pred)
+                else:
+                    # DO NOT ALLOW SQL with no predicates
+                    continue
+
                 if int(row[3]) < 1:
                     print("Queries must have non-zero cardinalities")
                     exit(1)
                 labels.append(row[3])
+
                 q_cnt += 1
                 if q_cnt >= num_queries:
                     break
@@ -275,6 +292,7 @@ class DataLoader:
                 pred_vec.append(column2vec[col])
                 pred_vec.append([lower_bound, scale, norm_ehr, norm_table_size])
                 pred_vec = np.hstack(pred_vec)
+                self.pred_dim = len(pred_vec)
                 predicates_enc[i].append(pred_vec)
 
             # Join instruction
@@ -298,8 +316,18 @@ class DataLoader:
                 norm_n_unique1 = self.n_unique_scalar.transform([col1_n_unique])[0]
                 norm_n_unique2 = self.n_unique_scalar.transform([col2_n_unique])[0]
                 join_onehot = join2vec[join]
-                joins_enc[i].append(list(join_onehot) + [norm_tab1_size, norm_tab2_size])
-                join_selectivity_enc[i].append([norm_n_unique1, norm_n_unique2] + norm_hist1 + norm_hist2)
+                join_vec = list(join_onehot) + [norm_tab1_size, norm_tab2_size]
+                self.join_dim = len(join_vec)
+                joins_enc[i].append(join_vec)
+                selectivity_vec = [norm_n_unique1, norm_n_unique2] + norm_hist1 + norm_hist2
+                self.selectivity_dim = len(selectivity_vec)
+                join_selectivity_enc[i].append(selectivity_vec)
+
+            # if no join in this sql, use all-zero encode for the join
+            if len(joins[i]) == 0:
+                joins_enc[i] = [np.zeros(len(join2vec)+2)]
+                join_selectivity_enc[i] = [np.zeros(2+2*self.histogram_dim)]
+
         return join_selectivity_enc, joins_enc, predicates_enc
 
     def get_train_test_dataset(self, num_queries=10000, file_name_data=None):
@@ -321,7 +349,7 @@ class DataLoader:
 
         # Encode dataset with metas
         enc_join_selectivities, enc_join_metas, enc_preds = self.encode_dataset(joins, predicates)
-        norm_labels, min_val, max_val = normalize_labels(labels)
+        norm_labels, min_label_val, max_label_val = normalize_labels(labels)
 
         # Split in training and validation samples
         num_train = int(num_queries * 0.9)
@@ -347,7 +375,7 @@ class DataLoader:
 
         train_data = [predicates_train, joins_selectivity_train, joins_train]
         test_data = [predicates_test, joins_selectivity_test, joins_test]
-        return labels_train, labels_test, max_num_joins, max_num_predicates, train_data, test_data
+        return labels_train, labels_test, min_label_val, max_label_val, max_num_joins, max_num_predicates, train_data, test_data
 
     def get_and_encode_outside_dataset(self, file_name_data):
         joins, predicates, labels = self.load_data(file_name_data, self.num_materialized_samples)
@@ -355,73 +383,60 @@ class DataLoader:
         enc_dataset = [enc_preds, enc_join_selectivities, enc_join_metas]
         return labels, enc_dataset
 
+    def make_dataset(self, predicates, joins_selectivity, joins, labels, max_num_joins, max_num_predicates):
+        predicate_masks = []
+        predicate_tensors = []
+        for idx, predicate in enumerate(predicates):
+            predicate_tensor = np.vstack(predicate)
+            num_pad = max_num_predicates - predicate_tensor.shape[0]
+            predicate_mask = np.ones_like(predicate_tensor).mean(1, keepdims=True)
+            predicate_tensor = np.pad(predicate_tensor, ((0, num_pad), (0, 0)), 'constant')
+            predicate_mask = np.pad(predicate_mask, ((0, num_pad), (0, 0)), 'constant')
+            predicate_tensors.append(np.expand_dims(predicate_tensor, 0))
+            predicate_masks.append(np.expand_dims(predicate_mask, 0))
+        predicate_tensors = np.vstack(predicate_tensors)
+        predicate_tensors = torch.FloatTensor(predicate_tensors)
+        predicate_masks = np.vstack(predicate_masks)
+        predicate_masks = torch.FloatTensor(predicate_masks)
+
+        join_masks = []
+        join_tensors = []
+        selectivity_tensors = []
+        for idx, join in enumerate(joins):
+            join_tensor = np.vstack(join)
+            selectivity_tensor = np.vstack(joins_selectivity[idx])
+            num_pad = max_num_joins - join_tensor.shape[0]
+            join_mask = np.ones_like(join_tensor).mean(1, keepdims=True)
+            join_tensor = np.pad(join_tensor, ((0, num_pad), (0, 0)), 'constant')
+            selectivity_tensor = np.pad(selectivity_tensor, ((0, num_pad), (0, 0)), 'constant')
+            join_mask = np.pad(join_mask, ((0, num_pad), (0, 0)), 'constant')
+            join_tensors.append(np.expand_dims(join_tensor, 0))
+            selectivity_tensors.append(np.expand_dims(selectivity_tensor, 0))
+            join_masks.append(np.expand_dims(join_mask, 0))
+        join_tensors = np.vstack(join_tensors)
+        join_tensors = torch.FloatTensor(join_tensors)
+        selectivity_tensors = np.vstack(selectivity_tensors)
+        selectivity_tensors = torch.FloatTensor(selectivity_tensors)
+        join_masks = np.vstack(join_masks)
+        join_masks = torch.FloatTensor(join_masks)
+
+        target_tensor = torch.FloatTensor(labels)
+
+        return dataset.TensorDataset(predicate_tensors, selectivity_tensors, join_tensors, target_tensor,
+                                     predicate_masks, join_masks)
 
 
-def make_dataset(predicates, joins, labels, max_num_joins, max_num_predicates):
-    """Add zero-padding and wrap as tensor dataset."""
+def get_torch_train_data():
+    data_loader = DataLoader("./GenData/data_gen.csv", "./GenData/gen_data_meta.pkl", 100)
+    labels_train, labels_test, min_label_val, max_label_val,  max_num_joins, max_num_predicates, train_data, test_data = \
+        data_loader.get_train_test_dataset(num_queries=10000)
+    input_dim = [data_loader.pred_dim, data_loader.selectivity_dim, data_loader.join_dim]
+    train_dataset = data_loader.make_dataset(*train_data, labels=labels_train, max_num_joins=max_num_joins,
+                                             max_num_predicates=max_num_predicates)
+    test_dataset = data_loader.make_dataset(*test_data, labels=labels_test, max_num_joins=max_num_joins,
+                                            max_num_predicates=max_num_predicates)
+    return train_dataset, test_dataset, input_dim, data_loader, min_label_val, max_label_val, labels_train, labels_test
 
-    # sample_masks = []
-    # sample_tensors = []
-    # for sample in samples:
-    #     sample_tensor = np.vstack(sample)
-    #     num_pad = max_num_joins + 1 - sample_tensor.shape[0]
-    #     sample_mask = np.ones_like(sample_tensor).mean(1, keepdims=True)
-    #     sample_tensor = np.pad(sample_tensor, ((0, num_pad), (0, 0)), 'constant')
-    #     sample_mask = np.pad(sample_mask, ((0, num_pad), (0, 0)), 'constant')
-    #     sample_tensors.append(np.expand_dims(sample_tensor, 0))
-    #     sample_masks.append(np.expand_dims(sample_mask, 0))
-    # sample_tensors = np.vstack(sample_tensors)
-    # sample_tensors = torch.FloatTensor(sample_tensors)
-    # sample_masks = np.vstack(sample_masks)
-    # sample_masks = torch.FloatTensor(sample_masks)
-
-    predicate_masks = []
-    predicate_tensors = []
-    for predicate in predicates:
-        predicate_tensor = np.vstack(predicate)
-        num_pad = max_num_predicates - predicate_tensor.shape[0]
-        predicate_mask = np.ones_like(predicate_tensor).mean(1, keepdims=True)
-        predicate_tensor = np.pad(predicate_tensor, ((0, num_pad), (0, 0)), 'constant')
-        predicate_mask = np.pad(predicate_mask, ((0, num_pad), (0, 0)), 'constant')
-        predicate_tensors.append(np.expand_dims(predicate_tensor, 0))
-        predicate_masks.append(np.expand_dims(predicate_mask, 0))
-    predicate_tensors = np.vstack(predicate_tensors)
-    predicate_tensors = torch.FloatTensor(predicate_tensors)
-    predicate_masks = np.vstack(predicate_masks)
-    predicate_masks = torch.FloatTensor(predicate_masks)
-
-    join_masks = []
-    join_tensors = []
-    for join in joins:
-        join_tensor = np.vstack(join)
-        num_pad = max_num_joins - join_tensor.shape[0]
-        join_mask = np.ones_like(join_tensor).mean(1, keepdims=True)
-        join_tensor = np.pad(join_tensor, ((0, num_pad), (0, 0)), 'constant')
-        join_mask = np.pad(join_mask, ((0, num_pad), (0, 0)), 'constant')
-        join_tensors.append(np.expand_dims(join_tensor, 0))
-        join_masks.append(np.expand_dims(join_mask, 0))
-    join_tensors = np.vstack(join_tensors)
-    join_tensors = torch.FloatTensor(join_tensors)
-    join_masks = np.vstack(join_masks)
-    join_masks = torch.FloatTensor(join_masks)
-
-    target_tensor = torch.FloatTensor(labels)
-
-    return dataset.TensorDataset(predicate_tensors, join_tensors, target_tensor,
-                                 predicate_masks, join_masks)
-
-
-def get_train_datasets(num_queries, num_materialized_samples):
-    dicts, column_min_max_vals, min_val, max_val, labels_train, labels_test, max_num_joins, max_num_predicates, train_data, test_data = load_and_encode_train_data(
-        num_queries, num_materialized_samples)
-    train_dataset = make_dataset(*train_data, labels=labels_train, max_num_joins=max_num_joins,
-                                 max_num_predicates=max_num_predicates)
-    print("Created TensorDataset for training data")
-    test_dataset = make_dataset(*test_data, labels=labels_test, max_num_joins=max_num_joins,
-                                max_num_predicates=max_num_predicates)
-    print("Created TensorDataset for validation data")
-    return dicts, column_min_max_vals, min_val, max_val, labels_train, labels_test, max_num_joins, max_num_predicates, train_dataset, test_dataset
 
 if __name__ == "__main__":
-    data_loader = DataLoader("../GenData/data_gen.csv", "../GenData/gen_data_meta.pkl", 100)
-    data_loader.get_train_test_dataset(num_queries=10000)
+    pass

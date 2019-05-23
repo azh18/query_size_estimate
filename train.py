@@ -120,6 +120,12 @@ def train_and_predict(workload_name, num_queries, num_epochs, batch_size, hid_un
             optimizer.step()
 
         print("Epoch {}, loss: {}".format(epoch, loss_total / len(train_data_loader)))
+        preds_test, t_total = predict(model, test_data_loader, cuda)
+        preds_test_unnorm = unnormalize_labels(preds_test, min_val, max_val)
+        labels_test_unnorm = unnormalize_labels(labels_test, min_val, max_val)
+        print("\nQ-Error validation set:")
+        print_qerror(preds_test_unnorm, labels_test_unnorm)
+        print("")
 
     # Get final training and validation set predictions
     preds_train, t_total = predict(model, train_data_loader, cuda)
@@ -183,7 +189,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--testset", help="synthetic, scale, or job-light", type=str, default="synthetic")
     parser.add_argument("--queries", help="number of training queries (default: 10000)", type=int, default=10000)
-    parser.add_argument("--epochs", help="number of epochs (default: 10)", type=int, default=10)
+    parser.add_argument("--epochs", help="number of epochs (default: 10)", type=int, default=100)
     parser.add_argument("--batch", help="batch size (default: 1024)", type=int, default=1024)
     parser.add_argument("--hid", help="number of hidden units (default: 256)", type=int, default=256)
     parser.add_argument("--cuda", help="use CUDA", action="store_true")

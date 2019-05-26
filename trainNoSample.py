@@ -88,10 +88,10 @@ def train_and_predict(workload_name, num_queries, num_epochs, batch_size, hid_un
     predicate_feats, selectivity_feats, join_feats = input_dim[0], input_dim[1], input_dim[2]
 
     # model = SetConv(sample_feats, predicate_feats, join_feats, hid_units)
-    hid_units_predicate = 256
-    hid_units_join_selectivity = 256
-    hid_units_join = 256
-    hid_units_output = 256
+    hid_units_predicate = 128
+    hid_units_join_selectivity = 64
+    hid_units_join = 128
+    hid_units_output = 128
     model = SetConv(predicate_feats, join_feats, selectivity_feats, hid_units_predicate, hid_units_join_selectivity,
                  hid_units_join, hid_units_output)
 

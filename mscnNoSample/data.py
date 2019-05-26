@@ -241,6 +241,8 @@ class DataLoader:
                 tab_abbr = col.split(".")[0]
                 table_size = self.table_abbr_size[tab_abbr]
                 norm_table_size = self.table_size_scalar.transform([table_size])[0]
+                col_n_unique = self.col_n_unique_values[col]
+                norm_col_n_unique = self.n_unique_scalar.transform([col_n_unique])[0]
                 # compute estimate_hit_rate
                 norm_ticks = self.col_val_scalar_dict[col].transform(self.raw_histogram[col][0])
                 norm_hists = list(np.array(self.raw_histogram[col][1]) / max(self.raw_histogram[col][1]))
@@ -287,10 +289,10 @@ class DataLoader:
                             beg_idx = idx
                     estimate_hit_rate += sum(norm_hists[beg_idx:])
                 norm_ehr = self.ehr_scalar.transform([estimate_hit_rate])[0]
-                pred_vec = []
-                pred_vec.append(op2vec[op])
+                pred_vec = list()
                 pred_vec.append(column2vec[col])
-                pred_vec.append([lower_bound, scale, norm_ehr, norm_table_size])
+                pred_vec.append(op2vec[op])
+                pred_vec.append([lower_bound, scale, norm_ehr, norm_table_size, norm_col_n_unique])
                 pred_vec = np.hstack(pred_vec)
                 self.pred_dim = len(pred_vec)
                 predicates_enc[i].append(pred_vec)

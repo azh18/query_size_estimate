@@ -52,8 +52,8 @@ def load_data(file_name, num_materialized_samples):
 
 
 def load_and_encode_train_data(num_queries, num_materialized_samples):
-    file_name_queries = "data/train"
-    file_name_column_min_max_vals = "data/column_min_max_vals.csv"
+    file_name_queries = "GenData/data_gen"
+    file_name_column_min_max_vals = "GenData/data_meta.csv"
 
     joins, predicates, tables, samples, label = load_data(file_name_queries, num_materialized_samples)
 

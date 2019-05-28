@@ -6,9 +6,9 @@ import torch
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
 
-from mscnNoSample.util import *
-from mscnNoSample.data import get_torch_train_data
-from mscnNoSample.model import SetConv
+from myDNN.util import *
+from myDNN.data import get_torch_train_data
+from myDNN.model import SetConv
 
 
 def unnormalize_torch(vals, min_val, max_val):
@@ -195,13 +195,13 @@ def train_and_predict(workload_name, num_queries, num_epochs, batch_size, hid_un
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--testset", help="synthetic, scale, or job-light", type=str, default="synthetic")
-    parser.add_argument("--queries", help="number of training queries (default: 10000)", type=int, default=10000)
-    parser.add_argument("--epochs", help="number of epochs (default: 10)", type=int, default=300)
-    parser.add_argument("--batch", help="batch size (default: 1024)", type=int, default=1024)
+    parser.add_argument("--queries", help="number of training queries (default: 10000)", type=int, default=40000)
+    parser.add_argument("--epochs", help="number of epochs (default: 10)", type=int, default=3000)
+    parser.add_argument("--batch", help="batch size (default: 1024)", type=int, default=4096)
     parser.add_argument("--hid", help="number of hidden units (default: 256)", type=int, default=256)
     parser.add_argument("--cuda", help="use CUDA", action="store_true")
     args = parser.parse_args()
-    args.cuda = False
+    args.cuda = True
     train_and_predict(args.testset, args.queries, args.epochs, args.batch, args.hid, args.cuda)
 
 

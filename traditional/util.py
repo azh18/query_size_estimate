@@ -47,7 +47,7 @@ def encode_data_fixed(predicates, joins, column_min_max_vals, columns, join2vec,
     for i, query in enumerate(predicates):
         attr_preds = {}
         for predicate in query:
-            print(query)
+            # print(query)
             if len(predicate) == 3:
                 # Proper predicate
                 column = predicate[0]
@@ -80,7 +80,7 @@ def encode_data_fixed(predicates, joins, column_min_max_vals, columns, join2vec,
                 if attr_preds[col][0] == 0:
                     attr_preds[col] = np.array([0, 0, 0], dtype=np.float64)
                 this_predicates_enc = np.hstack([this_predicates_enc, attr_preds[col]])
-        print(this_predicates_enc)
+        # print(this_predicates_enc)
         predicates_enc.append(this_predicates_enc)
 
         this_joins_enc = np.zeros(n_total_joins)

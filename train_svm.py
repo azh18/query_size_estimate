@@ -5,7 +5,7 @@ from traditional.svm_model import SVRModel
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--testset", help="synthetic, scale, or job-light", type=str, default="synthetic")
-    parser.add_argument("--queries", help="number of training queries (default: 10000)", type=int, default=10000)
+    parser.add_argument("--queries", help="number of training queries (default: 10000)", type=int, default=50000)
     args = parser.parse_args()
     train_data, labels_train, test_data, labels_test, column_min_max_vals, label_min_max_vals = \
         load_and_encode_train_data(args.queries, 1000)

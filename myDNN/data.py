@@ -431,7 +431,7 @@ class DataLoader:
 def get_torch_train_data():
     data_loader = DataLoader("./GenData/data_gen.csv", "./GenData/gen_data_meta.pkl", 100)
     labels_train, labels_test, min_label_val, max_label_val,  max_num_joins, max_num_predicates, train_data, test_data = \
-        data_loader.get_train_test_dataset(num_queries=10000)
+        data_loader.get_train_test_dataset(num_queries=50000)
     input_dim = [data_loader.pred_dim, data_loader.selectivity_dim, data_loader.join_dim]
     train_dataset = data_loader.make_dataset(*train_data, labels=labels_train, max_num_joins=max_num_joins,
                                              max_num_predicates=max_num_predicates)

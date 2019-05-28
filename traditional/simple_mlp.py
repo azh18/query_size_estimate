@@ -148,7 +148,7 @@ class SimpleMLPLearner:
     @staticmethod
     def train_and_predict():
         cuda = False
-        num_queries = 10000
+        num_queries = 50000
         batch_size = 1024
         n_hidden = 256
         predicates_enc, joins_enc, label = load_and_encode_train_data(1000)
@@ -156,7 +156,7 @@ class SimpleMLPLearner:
 
         join_feats = len(joins_enc[0])
         predicates_feats = len(predicates_enc[0])
-        print("join_feats=", join_feats, "predicates_feats=", predicates_feats)
+        # print("join_feats=", join_feats, "predicates_feats=", predicates_feats)
         model = SimpleMLP(predicates_feats, join_feats, n_hidden)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
@@ -166,7 +166,7 @@ class SimpleMLPLearner:
         test_data_loader = DataLoader(test_dataset, batch_size=batch_size)
 
 
-        n_epoch = 100
+        n_epoch = 1000
         model.train()
         for epoch in range(n_epoch):
             loss_total = 0.0
@@ -184,7 +184,19 @@ class SimpleMLPLearner:
                 optimizer.step()
             print("Epoch {}, loss: {}".format(epoch, loss_total / len(train_data_loader)))
 
-        # run on validation dataset
+            min_val, max_val = label_min_max_values[0], label_min_max_values[1]
+            preds_train, t_total = predict(model, train_data_loader, cuda)
+            preds_test, t_total = predict(model, test_data_loader, cuda)
+            real_preds_train = unnormalize_labels(preds_train, min_val, max_val)
+            real_preds_test = unnormalize_labels(preds_test, min_val, max_val)
+            real_targets_train = unnormalize_labels(train_labels, min_val, max_val)
+            real_targets_test = unnormalize_labels(test_labels, min_val, max_val)
+            # Print metrics
+
+
+            print("\nQ-Error validation set:")
+            print_qerror(real_preds_test, real_targets_test)
+            # run on validation dataset
 
         min_val, max_val = label_min_max_values[0], label_min_max_values[1]
         preds_train, t_total = predict(model, train_data_loader, cuda)
